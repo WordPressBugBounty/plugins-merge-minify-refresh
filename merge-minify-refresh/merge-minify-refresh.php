@@ -3,7 +3,7 @@
  * Plugin Name: Merge + Minify + Refresh
  * Plugin URI: https://wordpress.org/plugins/merge-minify-refresh
  * Description: Merge/Concatenate & Minify CSS & JS.
- * Version: 2.12
+ * Version: 2.15
  * Author: Launch Interactive
  * Author URI: http://launchinteractive.com.au
  * Requires PHP: 7.4
@@ -31,7 +31,7 @@ use MergeMinifyRefresh\HandlesList;
 
 class MergeMinifyRefresh
 {
-	private const VERSION = '2.6';
+	private const VERSION = '2.14';
 
 	private $host = '';
 	private $root = '';
@@ -39,6 +39,7 @@ class MergeMinifyRefresh
 
 	private $mergecss = true;
 	private $checkcssimports = true;
+	private $checkjsmodules = true;
 	private $mergejs = true;
 	private $cssmin = true;
 	private $jsmin = true;
@@ -186,6 +187,7 @@ class MergeMinifyRefresh
 
 			$this->mergecss = !get_option('mmr-nomergecss');
 			$this->checkcssimports = !get_option('mmr-nocheckcssimports');
+			$this->checkjsmodules= !get_option('mmr-nocheckjsmodules');
 			$this->mergejs = !get_option('mmr-nomergejs');
 			$this->cssmin = !get_option('mmr-nocssmin');
 			$this->jsmin = !get_option('mmr-nojsmin');
@@ -240,16 +242,43 @@ class MergeMinifyRefresh
 
 	public function mmr_files_callback()
 	{
-		if(isset($_POST['purge']) && $_POST['purge'] == 'all')
+		//CSRF protection
+		check_ajax_referer('mmr_files_nonce', 'nonce');
+
+		// Authentication / authorization
+		if(!current_user_can('manage_options'))
+		{
+			wp_send_json_error('Unauthorized', 403);
+		}
+
+		$purge = isset($_POST['purge']) ? sanitize_text_field($_POST['purge']) : '';
+
+		if($purge == 'all')
 		{
 			$this->purgeAll();
 		}
-		else if(isset($_POST['purge']))
+		else if($purge !== '')
 		{
-			array_map('unlink', glob(MMR_CACHE_DIR . '/' . basename($_POST['purge']) . '*'));
+			$matches = glob(MMR_CACHE_DIR . '/' . basename($purge) . '*');
+			if($matches)
+			{
+				foreach($matches as $file)
+				{
+					if(is_file($file))
+					{
+						unlink($file);
+					}
+				}
+			}
 		}
 
-		$return = array('js'=>array(),'css'=>array(),'stamp'=>$_POST['stamp']);
+		$stamp = isset($_POST['stamp']) ? sanitize_text_field($_POST['stamp']) : '';
+
+		$return = array(
+			'js'=>array(),
+			'css'=>array(),
+			'stamp'=>$stamp
+		);
 
 		$files = glob(MMR_CACHE_DIR . '/*.log');
 
@@ -260,6 +289,11 @@ class MergeMinifyRefresh
 				$script_path = substr($file, 0, -4);
 
 				$ext = pathinfo($script_path, PATHINFO_EXTENSION);
+
+				if(!in_array($ext, ['js', 'css'], true))
+				{
+					continue;
+				}
 
 				$log = file_get_contents($file);
 
@@ -326,10 +360,7 @@ class MergeMinifyRefresh
 			}
 		}
 
-		header('Content-Type: application/json');
-		echo json_encode($return);
-
-		wp_die(); // this is required to terminate immediately and return a proper response
+		wp_send_json($return);
 	}
 
 	public function plugin_deactivate()
@@ -381,6 +412,9 @@ class MergeMinifyRefresh
 		$pluginDir = plugin_dir_path(__FILE__);
 		wp_enqueue_style( 'merge-minify-refresh', plugins_url('admin.css', __FILE__), array(), filemtime($pluginDir . 'admin.css'));
 		wp_enqueue_script( 'merge-minify-refresh', plugins_url('admin.js', __FILE__), array(), filemtime($pluginDir . 'admin.js'), true );
+		wp_localize_script('merge-minify-refresh', 'mmr', array(
+			'nonce' => wp_create_nonce('mmr_files_nonce')
+		));
 	}
 
 	public function admin_menu()
@@ -392,6 +426,7 @@ class MergeMinifyRefresh
 	{
 		register_setting('mmr-group', 'mmr-nomergecss');
 		register_setting('mmr-group', 'mmr-nocheckcssimports');
+		register_setting('mmr-group', 'mmr-nocheckjsmodules');
 		register_setting('mmr-group', 'mmr-nomergejs');
 		register_setting('mmr-group', 'mmr-nocssmin');
 		register_setting('mmr-group', 'mmr-nojsmin');
@@ -448,6 +483,9 @@ class MergeMinifyRefresh
 
 		echo '<p><label><input type="checkbox" name="mmr-nocheckcssimports" value="1" ' . checked(1 == get_option('mmr-nocheckcssimports'), true, false) . '/> Skip checking for @import in CSS.</label>';
 		echo '<br/><em>Check this if you are sure your CSS doesn\'t have any @import statements. Merging will be faster.</em></p>';
+
+		echo '<p><label><input type="checkbox" name="mmr-nocheckjsmodules" value="1" ' . checked(1 == get_option('mmr-nocheckjsmodules'), true, false) . '/> Skip checking for Javascript Modules. Plugin developers should use wp_enqueue_script_module to enqueue modules but there are plenty that don\'t.</label>';
+		echo '<br/><em>Check this if you are sure you don\'t have any JS Modules. Merging will be faster.</em></p>';
 
 		echo '<p><label><input type="checkbox" name="mmr-http2push-css" value="1" ' . checked(1 == get_option('mmr-http2push-css'), true, false) . '/> Enable Preload/Push Headers for CSS</label>';
 		echo '<br/>';
@@ -921,6 +959,7 @@ class MergeMinifyRefresh
 				$srcFilter = 'script_loader_src';
 				$checkMedia = false;
 				$checkForCSSImports = false;
+				$checkForJSModules = $this->checkjsmodules;
 				break;
 
 			case 'css':
@@ -929,6 +968,7 @@ class MergeMinifyRefresh
 				$srcFilter = 'style_loader_src';
 				$checkMedia = true;
 				$checkForCSSImports = $this->checkcssimports;
+				$checkForJSModules = false;
 				break;
 
 			default:
@@ -994,6 +1034,27 @@ class MergeMinifyRefresh
 					{
 						$contents = file_get_contents($this->root . $script_path);
 						$shouldStartNewFileGroup = strpos($contents, '@import') !== false;
+					}
+
+					//detect js modules
+					if(!$shouldStartNewFileGroup && $checkForJSModules && $extension == "js" )
+					{
+						/*
+						Check if the file is a module.
+						This will not always work. There is no real good way of doing this.
+						Developers are better to enqueue modules with wp_enqueue_script_module.
+						Looks for "export", "import" & "import.meta" within the file.
+						*/
+						$contents = file_get_contents($this->root . $script_path);
+						$isModule = preg_match(
+							'/\b(import\s+[^({])|(\bexport\s)|(\bimport\.meta\b)|(\bimport\s*\()|(\bimport\s*\{)/m',
+							$contents
+						);
+						if($isModule)
+						{
+							$handles->addNonMerged($handle);
+							continue;
+						}
 					}
 
 					// Check if we should start a new group if there is extra data
@@ -1130,21 +1191,20 @@ class MergeMinifyRefresh
 	{
 		$lines = 0;
 		$fh = fopen($full_path, "r");
-		$isMinified = false;
 		while(false !== ($str = fgets($fh)))
 		{
 			$lines++;
 			if(strlen($str) > 700)
 			{
-				$isMinified = true;
-				break;
+				fclose($fh);
+				return true;
 			}
 		}
 		fclose($fh);
 
-		if($isMinified)
+		if($lines === 0)
 		{
-			return true;
+			return false; // empty file can't be minified
 		}
 
 		$ratio = filesize($full_path) / $lines;

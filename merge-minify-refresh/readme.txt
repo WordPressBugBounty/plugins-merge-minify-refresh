@@ -4,13 +4,15 @@ Contributors:launchinteractive
 Tags: merge, concatenate, minify, closure, refresh
 Requires at least: 6.4.0
 Stable tag: trunk
-Tested up to: 6.4.3
+Tested up to: 6.9.0
 License: GPLv2 or later
 License URI: http://www.gnu.org/licenses/gpl-2.0.html
 
 Merges/Concatenates CSS & Javascript and then minifies using Minify (for CSS) and Google Closure (for JS with Minify as a fallback).
 
 == Description ==
+
+Development for this plugin is now done on [GitHub](https://github.com/Launch-Interactive/Merge-Minify-Refresh). Pull requests are welcome.
 
 This plugin merges/concatenates Cascading Style Sheets & Javascript files into groups. It then minifies the generated files using Minify (for CSS) and Google Closure (for JS - fallback to Minify when not available). Minification is done via WP-Cron so that it doesn't slow down the website. When JS or CSS changes files are re-processed. No need to empty cache!
 
@@ -97,6 +99,13 @@ modify_js_output_before_save
 2. Activate the plugin through the 'Plugins' menu in WordPress
 
 == Changelog ==
+
+= 2.15 =
+* CSRF fixes
+
+= 2.13 =
+* Update Closure Compiler to latest version
+* Prevent divide by 0 in isFileMinified
 
 = 2.12 =
 * Removed GLOB_BRACE which isn't available on some non GNU systems
